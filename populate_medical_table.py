@@ -75,20 +75,22 @@ def main():
         first_name, last_name, gender, age, weight, height, health_history = generate_random_patient()
         
         # Encrypt gender and age
-        gender_enc = encrypt_data(gender, secret_key)
-        age_enc = encrypt_data(age, secret_key)
+        gender_enc = encrypt_data(gender)
+        age_enc = encrypt_data(age)
         gender_enc_b64 = base64.b64encode(gender_enc).decode('utf-8')
         age_enc_b64 = base64.b64encode(age_enc).decode('utf-8')
         
         # Compute MAC
-        data_str = f"{first_name}{last_name}{gender_enc_b64}{age_enc_b64}{weight}{height}{health_history}{doctor_id}"
-        mac = compute_mac(data_str, secret_key)
+        data_str = f"{first_name}{last_name}{gender_enc_b64}{age_enc_b64}{weight}{height}{health_history}"
+        mac = compute_mac(data_str)
         
         # Insert into database
         cursor.execute(
             "INSERT INTO medical_table (first_name, last_name, gender, age, weight, height, health_history, doctor_id, mac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (first_name, last_name, gender_enc_b64, age_enc_b64, weight, height, health_history, doctor_id, mac)
         )
+
+        cursor.execute("UPDATE metadata SET total_records = total_records + 1")
         
         print(f"Inserted patient {i+1}: {first_name} {last_name}")
     

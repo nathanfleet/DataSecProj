@@ -3,6 +3,10 @@ from tkinter import messagebox
 import sqlite3
 from encrypt_decrypt import hash_password, decrypt_password, encrypt_password, encrypt_data, decrypt_data, compute_mac, verify_mac
 import base64
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 conn = sqlite3.connect('Masters.db')
 cursor = conn.cursor()
@@ -138,19 +142,22 @@ class App:
             height = float(self.height_entry.get())
             health_history = self.health_history_entry.get()
 
-            gender_enc = encrypt_data(gender, self.secret_key)
-            age_enc = encrypt_data(age, self.secret_key)
+            gender_enc = encrypt_data(gender)
+            age_enc = encrypt_data(age)
             gender_enc_b64 = base64.b64encode(gender_enc).decode('utf-8')
             age_enc_b64 = base64.b64encode(age_enc).decode('utf-8')
 
-            data_str = f"{first}{last}{gender_enc_b64}{age_enc_b64}{weight}{height}{health_history}{self.doctor_id}"
-            mac = compute_mac(data_str, self.secret_key)
+            data_str = f"{first}{last}{gender_enc_b64}{age_enc_b64}{weight}{height}{health_history}"
+            mac = compute_mac(data_str)
 
 
             self.cursor.execute(
                 "INSERT INTO medical_table (first_name, last_name, gender, age, weight, height, health_history, doctor_id, mac) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (first, last, gender_enc_b64, age_enc_b64, weight, height, health_history, self.doctor_id, mac)
             )
+            self.conn.commit()
+
+            self.cursor.execute("UPDATE metadata SET total_records = total_records + 1")
             self.conn.commit()
 
             messagebox.showinfo("Success", "Patient Added Successfully!")
@@ -238,7 +245,7 @@ class App:
         try:
             if attribute == "age":
                 new_value_str = str(new_value)
-                new_value_enc = encrypt_data(new_value_str, self.secret_key)
+                new_value_enc = encrypt_data(new_value_str)
                 new_value_enc_b64 = base64.b64encode(new_value_enc).decode('utf-8')
                 query = f"UPDATE medical_table SET {attribute} = ? WHERE first_name = ? AND last_name = ? AND doctor_id = ?"
                 self.cursor.execute(query, (new_value_enc_b64, first_name, last_name, self.doctor_id))
@@ -258,8 +265,8 @@ class App:
             )
             patient_data = self.cursor.fetchone()
             first_name_db, last_name_db, gender_enc_b64, age_enc_b64, weight, height, health_history = patient_data
-            data_str = f"{first_name_db}{last_name_db}{gender_enc_b64}{age_enc_b64}{weight}{height}{health_history}{self.doctor_id}"
-            mac = compute_mac(data_str, self.secret_key)
+            data_str = f"{first_name_db}{last_name_db}{gender_enc_b64}{age_enc_b64}{weight}{height}{health_history}"
+            mac = compute_mac(data_str)
             self.cursor.execute(
                 "UPDATE medical_table SET mac = ? WHERE first_name = ? AND last_name = ? AND doctor_id = ?",
                 (mac, first_name, last_name, self.doctor_id)
@@ -277,19 +284,20 @@ class App:
         self.view_action_window = tk.Toplevel()
         self.view_action_window.title("View Patient Info")
 
-        tk.Label(self.view_action_window, text="Patient First Name").pack()
-        self.first_view_entry = tk.Entry(self.view_action_window)
-        self.first_view_entry.pack()
+        if self.user_group == 'H':
+            tk.Label(self.view_action_window, text="Patient First Name").pack()
+            self.first_view_entry = tk.Entry(self.view_action_window)
+            self.first_view_entry.pack()
 
-        tk.Label(self.view_action_window, text="Patient Last Name").pack()
-        self.last_view_entry = tk.Entry(self.view_action_window)
-        self.last_view_entry.pack()
+            tk.Label(self.view_action_window, text="Patient Last Name").pack()
+            self.last_view_entry = tk.Entry(self.view_action_window)
+            self.last_view_entry.pack()
 
-        tk.Button(
-            self.view_action_window,
-            text="Search",
-            command=lambda: self.view_info(self.first_view_entry.get(), self.last_view_entry.get())
-        ).pack(pady=5)
+            tk.Button(
+                self.view_action_window,
+                text="Search",
+                command=lambda: self.view_info(self.first_view_entry.get(), self.last_view_entry.get())
+            ).pack(pady=5)
 
         tk.Button(
             self.view_action_window,
@@ -297,19 +305,35 @@ class App:
             command=self.view_all_patients
         ).pack(pady=5)
 
+    # added this method as a way for group 'R' users to view records in the database
+    # R users cannot see names, while H users can
+    # all medical records are viewable
     def view_all_patients(self):
         try:
+            self.cursor.execute("SELECT total_records FROM metadata")
+            total_records_result = self.cursor.fetchone()
+            if total_records_result is None:
+                messagebox.showerror("Error", "Failed to retrieve toal record count.")
+                return
+            excpected_total_records = total_records_result[0]
+
             self.cursor.execute(
                 "SELECT first_name, last_name, gender, age, weight, height, health_history, mac FROM medical_table"
             )
             results = self.cursor.fetchall()
+            actual_total_records = len(results)
+
+            if actual_total_records != excpected_total_records:
+                messagebox.showerror(
+                    "Error",
+                    f"Data completeness check failed! Expected {excpected_total_records} records but found {actual_total_records}."
+                )
 
             if results:
                 self.view_action_window.destroy()
                 self.view_all_window = tk.Toplevel()
                 self.view_all_window.title("All Patients Information")
 
-                # Create a canvas and scrollbar for scrolling
                 canvas = tk.Canvas(self.view_all_window)
                 scrollbar = tk.Scrollbar(self.view_all_window, orient="vertical", command=canvas.yview)
                 scrollable_frame = tk.Frame(canvas)
@@ -328,22 +352,20 @@ class App:
                 for result in results:
                     first_name_db, last_name_db, gender_enc_b64, age_enc_b64, weight, height, health_history, mac = result
 
-                    # For 'R' users, hide names and encrypted fields
+                    data_str = f"{first_name_db}{last_name_db}{gender_enc_b64}{age_enc_b64}{weight}{height}{health_history}"
+                    if not verify_mac(data_str, mac):
+                        messagebox.showerror("Error", "Data integrity check failed for a record!")
+                        continue
+
+                    # Decrypt sensitive data using shared encryption key
+                    gender_enc = base64.b64decode(gender_enc_b64)
+                    age_enc = base64.b64decode(age_enc_b64)
+                    gender = decrypt_data(gender_enc)
+                    age = decrypt_data(age_enc)
+
+                    # For 'R' users, hide names
                     if self.user_group == 'R':
                         first_name_db = last_name_db = 'Hidden'
-                        gender = age = 'Unavailable'
-                    else:
-                        # 'H' users can decrypt the fields
-                        data_str = f"{first_name_db}{last_name_db}{gender_enc_b64}{age_enc_b64}{weight}{height}{health_history}{self.doctor_id}"
-                        if not verify_mac(data_str, mac, self.secret_key):
-                            messagebox.showerror("Error", "Data integrity check failed for a record!")
-                            continue
-
-                        # Decrypt sensitive data
-                        gender_enc = base64.b64decode(gender_enc_b64)
-                        age_enc = base64.b64decode(age_enc_b64)
-                        gender = decrypt_data(gender_enc, self.secret_key)
-                        age = decrypt_data(age_enc, self.secret_key)
 
                     # Display the patient information
                     patient_info = f"Name: {first_name_db} {last_name_db}\n" \
@@ -355,7 +377,6 @@ class App:
                                 "--------------------------------------\n"
                     tk.Label(scrollable_frame, text=patient_info, justify="left", anchor="w").pack(fill="both", expand=True)
 
-                # Add a button to return to the homepage
                 tk.Button(self.view_all_window, text="Close", command=lambda: self.return_home(self.view_all_window)).pack(pady=10)
             else:
                 messagebox.showinfo("Info", "No patients found.")
@@ -363,6 +384,7 @@ class App:
                 self.homepage_window.deiconify()
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred: {e}")
+
 
     def view_info(self, first_name, last_name):
         try:
@@ -375,14 +397,14 @@ class App:
             if result:
                 first_name_db, last_name_db, gender_enc_b64, age_enc_b64, weight, height, health_history, mac = result
 
-                # For 'R' users, hide names and encrypted fields
+                # For 'R' users, hide names
                 if self.user_group == 'R':
                     messagebox.showerror("Access Denied", "You do not have permission to view this patient's detailed information.")
                     self.return_home(self.view_action_window)
                     return
                 else:
-                    data_str = f"{first_name_db}{last_name_db}{gender_enc_b64}{age_enc_b64}{weight}{height}{health_history}{self.doctor_id}"
-                    if not verify_mac(data_str, mac, self.secret_key):
+                    data_str = f"{first_name_db}{last_name_db}{gender_enc_b64}{age_enc_b64}{weight}{height}{health_history}"
+                    if not verify_mac(data_str, mac):
                         messagebox.showerror("Error", "Data integrity check failed!")
                         return
 
