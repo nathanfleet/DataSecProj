@@ -30,6 +30,21 @@ sql_command = """CREATE TABLE medical_table (
 );"""
 cursor.execute(sql_command)
 
+# metadata table to check for query completeness
+cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
+if cursor.fetchone() is None:
+    sql_command = """CREATE TABLE metadata (
+        total_records INTEGER
+    );"""
+    cursor.execute(sql_command)
+    cursor.execute("SELECT COUNT(*) FROM medical_table")
+    current_total_records = cursor.fetchone()[0]
+    cursor.execute("INSERT INTO metadata (total_records) VALUES (?)", (current_total_records,))
+else:
+    cursor.execute("SELECT COUNT(*) FROM medical_table")
+    current_total_records = cursor.fetchone()[0]
+    cursor.execute("UPDATE metadata SET total_records = ?", (current_total_records,))
+
 # Commit the changes and close the connection
 connection.commit()
 connection.close()
