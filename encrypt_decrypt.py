@@ -1,8 +1,9 @@
-import sqlite3
-import base64
 from Crypto.Cipher import AES
 from Crypto.Random import get_random_bytes
-from hashlib import sha256
+from Crypto.Util.Padding import pad, unpad
+from hashlib import sha256, pbkdf2_hmac
+import hmac
+import hashlib
 import bcrypt
 
 
@@ -39,3 +40,30 @@ def hash_password(password):
 
 def check_password(stored_hashed_password, password):
     return bcrypt.checkpw(password.encode('utf-8'), stored_hashed_password)
+
+def derive_key(password, salt):
+    key = pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000, dklen=32)
+    return key
+
+def encrypt_data(data, key):
+    if not isinstance(data, str):
+        data = str(data)
+    cipher = AES.new(key, AES.MODE_CBC)
+    ct_bytes = cipher.encrypt(pad(data.encode('utf-8'), AES.block_size))
+    iv = cipher.iv
+    return iv + ct_bytes
+
+def decrypt_data(enc_data, key):
+    iv = enc_data[:AES.block_size]
+    ct = enc_data[AES.block_size:]
+    cipher = AES.new(key, AES.MODE_CBC, iv)
+    pt = unpad(cipher.decrypt(ct), AES.block_size)
+    return pt.decode('utf-8')
+
+def compute_mac(data, key):
+    mac = hmac.new(key, data.encode('utf-8'), hashlib.sha256).hexdigest()
+    return mac
+
+def verify_mac(data, mac, key):
+    computed_mac = hmac.new(key, data.encode('utf-8'), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(mac, computed_mac)
